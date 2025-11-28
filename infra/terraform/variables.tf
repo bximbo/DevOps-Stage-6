@@ -1,4 +1,3 @@
-# AWS / General Configuration
 variable "aws_region" {
   description = "AWS region to deploy resources"
   type        = string
@@ -11,13 +10,6 @@ variable "environment" {
   default     = "production"
 }
 
-variable "owner_email" {
-  description = "Email of the infrastructure owner"
-  type        = string
-  default     = "israelabimbolaa@gmail.com"
-}
-
-# Compute / EC2
 variable "instance_type" {
   description = "EC2 instance type"
   type        = string
@@ -30,7 +22,6 @@ variable "volume_size" {
   default     = 25
 }
 
-# SSH Configuration
 variable "key_name" {
   description = "Name of the SSH key pair"
   type        = string
@@ -49,19 +40,17 @@ variable "ssh_private_key_path" {
 }
 
 variable "ssh_user" {
-  description = "Username for SSH"
+  description = "SSH username for the server"
   type        = string
   default     = "ubuntu"
 }
 
-# Networking / Security
 variable "allowed_ssh_cidr" {
   description = "CIDR blocks allowed to SSH"
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }
 
-# Application
 variable "domain_name" {
   description = "Domain name for the application"
   type        = string
@@ -77,5 +66,11 @@ variable "deploy_user" {
 variable "app_repo" {
   description = "Git repository for the application"
   type        = string
-  default     = "https://github.com/israeladenuga/DevOps-Stage-6.git"
+  default     = "https://github.com/bximbo/DevOps-Stage-6.git"
+}
+
+variable "owner_email" {
+  description = "Email of the infrastructure owner"
+  type        = string
+  default     = "israelabimbolaa@gmail.com"
 }
