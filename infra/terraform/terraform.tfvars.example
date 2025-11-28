@@ -1,26 +1,24 @@
-# Terraform Variables Values
-# Copy this file to terraform.tfvars and fill in your values
+# Copy this to terraform.tfvars and update your values
 
-# Project Configuration
-project_name = "devops-stage6"
-environment  = "production"
-owner_email  = "israelabimbolaa@gmail.com"
+# AWS / General Configuration
+aws_region     = "eu-north-1"
+environment    = "production"
+owner_email    = "israelabimbolaa@gmail.com"
 
-# AWS Configuration
-aws_region = "eu-north-1"
+# Compute / EC2
+instance_type  = "t3.medium"
+volume_size    = 25
 
-# Networking Configuration
-allowed_ssh_cidr = ["0.0.0.0/0"] # You can restrict to your IP for security
+# SSH Configuration
+key_name            = "todo-app-key"
+ssh_public_key      = "YOUR_PUBLIC_KEY_CONTENT_HERE"
+ssh_private_key_path = "~/.ssh/todo-app-key"
+ssh_user            = "ubuntu"
 
-# Compute Configuration
-instance_type    = "t3.medium"
-volume_size      = 25
+# Networking / Security
+allowed_ssh_cidr = ["0.0.0.0/0"]
 
-# SSH Configuration (fill these)
-ssh_public_key       = "YOUR_SSH_PUBLIC_KEY_CONTENT_HERE"
-ssh_private_key_path = "~/.ssh/id_rsa"
-ssh_user             = "ubuntu"
-key_name             = "todo-app-key"
-
-# Application Configuration
-domain_name = "israelabimbola.com"
+# Application
+domain_name  = "israelabimbola.com"
+deploy_user  = "deploy"
+app_repo     = "https://github.com/israeladenuga/DevOps-Stage-6.git"
