@@ -1,0 +1,123 @@
+---
+- name: Create application directory
+  file:
+    path: /home/ubuntu/todo-app
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+
+- name: Check if repository exists
+  stat:
+    path: /home/ubuntu/todo-app/.git
+  register: git_repo
+
+- name: Clone application repository
+  git:
+    repo: "https://github.com/{{ lookup('env', 'GITHUB_REPOSITORY') | default('israeladenuga/devops-stage-6', true) }}.git"
+    dest: /home/ubuntu/todo-app
+    version: main
+    force: yes
+  become_user: ubuntu
+  when: not git_repo.stat.exists
+
+- name: Pull latest changes from repository
+  git:
+    repo: "https://github.com/{{ lookup('env', 'GITHUB_REPOSITORY') | default('israeladenuga/devops-stage-6', true) }}.git"
+    dest: /home/ubuntu/todo-app
+    version: main
+    force: yes
+  become_user: ubuntu
+  when: git_repo.stat.exists
+  register: git_pull
+
+- name: Create .env file
+  copy:
+    dest: /home/ubuntu/todo-app/.env
+    content: |
+      # frontend:
+      PORT=8080
+      AUTH_API_ADDRESS=http://auth-api:8081
+      TODOS_API_ADDRESS=http://todos-api:8082
+
+      # auth-api:
+      AUTH_API_PORT=8081
+      JWT_SECRET=myfancysecret
+      USERS_API_ADDRESS=http://users-api:8083
+
+      # todos-api:
+      REDIS_HOST=redis-queue
+      REDIS_PORT=6379
+      REDIS_CHANNEL=log_channel
+
+      # users-api:
+      SERVER_PORT=8083
+
+      # log-message-processor:
+      # Uses same REDIS settings as todos-api
+    owner: ubuntu
+    group: ubuntu
+    mode: '0644'
+
+- name: Create letsencrypt directory for Traefik
+  file:
+    path: /home/ubuntu/todo-app/letsencrypt
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+
+- name: Create acme.json for SSL certificates
+  file:
+    path: /home/ubuntu/todo-app/letsencrypt/acme.json
+    state: touch
+    owner: ubuntu
+    group: ubuntu
+    mode: '0600'
+
+- name: Stop existing containers
+  command: docker-compose down
+  args:
+    chdir: /home/ubuntu/todo-app
+  become_user: ubuntu
+  ignore_errors: yes
+
+- name: Remove old images (cleanup)
+  command: docker image prune -af
+  become_user: ubuntu
+  ignore_errors: yes
+
+- name: Build and start Docker containers
+  command: docker-compose up -d --build
+  args:
+    chdir: /home/ubuntu/todo-app
+  become_user: ubuntu
+  register: compose_up
+  changed_when: "'Creating' in compose_up.stdout or 'Starting' in compose_up.stdout"
+
+- name: Wait for services to be healthy
+  pause:
+    seconds: 30
+
+- name: Check running containers
+  command: docker ps
+  become_user: ubuntu
+  register: docker_ps
+  changed_when: false
+
+- name: Display running containers
+  debug:
+    msg: "{{ docker_ps.stdout_lines }}"
+
+- name: Verify Traefik is running
+  uri:
+    url: "http://localhost:8090/api/overview"
+    status_code: 200
+  retries: 5
+  delay: 10
+  register: traefik_check
+  ignore_errors: yes
+
+- name: Display deployment result
+  debug:
+    msg: "Application deployed successfully! Access at https://{{ domain_name }}"

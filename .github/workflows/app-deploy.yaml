@@ -1,0 +1,94 @@
+name: Application Deployment
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'frontend/**'
+      - 'auth-api/**'
+      - 'todos-api/**'
+      - 'users-api/**'
+      - 'log-message-processor/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/app-deploy.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy Application via Ansible
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
+
+      - name: Install Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible
+
+      - name: Create Ansible inventory
+        run: |
+          mkdir -p infra/ansible/inventory
+          cat > infra/ansible/inventory/hosts <<EOF
+          [app_servers]
+          todo-app-server ansible_host=${{ secrets.SERVER_IP }} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/id_rsa ansible_python_interpreter=/usr/bin/python3
+
+          [app_servers:vars]
+          ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+          domain_name=israelabimbola.com
+          EOF
+
+      - name: Run Ansible Deployment
+        working-directory: infra/ansible
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          ansible-playbook -i inventory/hosts playbook.yml -v
+
+      - name: Verify Deployment
+        run: |
+          echo "Waiting for services to stabilize..."
+          sleep 45
+          
+          echo "Testing HTTPS endpoint..."
+          curl -f https://israelabimbola.com || exit 1
+          
+          echo "✅ Deployment verification successful!"
+
+      - name: Send Deployment Notification
+        if: always()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "${{ job.status == 'success' && '✅' || '❌' }} Application Deployment ${{ job.status }}"
+          to: israelabimbolaa@gmail.com
+          from: TODO App DevOps CI/CD
+          body: |
+            Application deployment ${{ job.status }}!
+            
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            Triggered by: ${{ github.actor }}
+            
+            Application URL: https://israelabimbola.com
+            Traefik Dashboard: http://${{ secrets.SERVER_IP }}:8090
+            
+            ${{ job.status == 'success' && 'All services are running successfully.' || 'Deployment failed. Please check the logs.' }}
+            
+            ${{ job.status == 'success' && 'You can now login with:
+            - Username: admin, Password: Admin123
+            - Username: hng, Password: HngTech
+            - Username: user, Password: Password' || '' }}

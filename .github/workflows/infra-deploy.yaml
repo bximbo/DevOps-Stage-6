@@ -1,0 +1,215 @@
+name: Infrastructure Deployment with Drift Detection
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'infra/terraform/**'
+      - 'infra/ansible/**'
+      - '.github/workflows/infra-deploy.yml'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: eu-north-1
+  TF_VERSION: 1.6.0
+
+jobs:
+  terraform-plan:
+    name: Terraform Plan & Drift Detection
+    runs-on: ubuntu-latest
+    outputs:
+      has_drift: ${{ steps.drift_check.outputs.has_drift }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: infra/terraform
+        run: terraform init
+
+      - name: Terraform Validate
+        working-directory: infra/terraform
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: infra/terraform
+        env:
+          TF_VAR_domain_name: israelabimbola.com
+          TF_VAR_owner_email: israelabimbolaa@gmail.com
+          TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+          TF_VAR_ssh_private_key_path: ~/.ssh/id_rsa
+        run: |
+          set +e
+          terraform plan -out=tfplan -detailed-exitcode
+          EXIT_CODE=$?
+          set -e
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+          terraform show -no-color tfplan > plan_output.txt
+          exit 0
+        continue-on-error: false
+
+      - name: Check for Drift
+        id: drift_check
+        run: |
+          EXIT_CODE=${{ steps.plan.outputs.exit_code }}
+          if [ "$EXIT_CODE" == "2" ]; then
+            echo "has_drift=true" >> $GITHUB_OUTPUT
+            echo "⚠️ Changes detected - Infrastructure will be updated"
+          elif [ "$EXIT_CODE" == "0" ]; then
+            echo "has_drift=false" >> $GITHUB_OUTPUT
+            echo "✅ No changes needed - Infrastructure matches desired state"
+          else
+            echo "❌ Terraform plan failed"
+            exit 1
+          fi
+
+      - name: Upload plan output
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: infra/terraform/plan_output.txt
+
+      - name: Send Infrastructure Changes Email
+        if: steps.drift_check.outputs.has_drift == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "⚠️ Infrastructure Changes Detected - Review Required"
+          to: israelabimbolaa@gmail.com
+          from: TODO App DevOps CI/CD
+          body: |
+            Infrastructure changes have been detected and require your review!
+            
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            Triggered by: ${{ github.actor }}
+            
+            Action: Terraform detected changes to infrastructure
+            Status: Waiting for manual approval in production environment
+            
+            View the full plan and approve the deployment:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            
+            Note: For first deployment, this creates new infrastructure.
+            For subsequent runs, this indicates drift from desired state.
+
+  wait-for-approval:
+    name: Wait for Manual Approval
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+    environment: production
+    
+    steps:
+    - name: Manual approval checkpoint
+      run: |
+        if [ "${{ needs.terraform-plan.outputs.has_drift }}" == "true" ]; then
+          echo "✅ Changes approved - Deploying infrastructure updates"
+        else
+          echo "✅ No changes detected - Deployment approved to proceed"
+        fi
+
+  terraform-apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    needs: [terraform-plan, wait-for-approval]
+    if: always() && needs.terraform-plan.result == 'success' && needs.wait-for-approval.result == 'success'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Setup SSH key for Ansible
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+      - name: Install Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible
+
+      - name: Terraform Init
+        working-directory: infra/terraform
+        run: terraform init
+
+      - name: Terraform Apply
+        working-directory: infra/terraform
+        env:
+          TF_VAR_domain_name: israelabimbola.com
+          TF_VAR_owner_email: israelabimbolaa@gmail.com
+          TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+          TF_VAR_ssh_private_key_path: ~/.ssh/id_rsa
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: terraform apply -auto-approve
+
+      - name: Send Deployment Success Email
+        if: success()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "✅ Terraform Deployment Successful"
+          to: israelabimbolaa@gmail.com
+          from: TODO App DevOps CI/CD
+          body: |
+            Infrastructure deployment completed successfully!
+            
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            
+            Application URL: https://israelabimbola.com
+
+      - name: Send Deployment Failure Email
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "❌ Terraform Deployment Failed"
+          to: israelabimbolaa@gmail.com
+          from: TODO App DevOps CI/CD
+          body: |
+            Infrastructure deployment failed!
+            
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            
+            Please check the logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

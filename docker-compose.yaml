@@ -1,0 +1,159 @@
+services:
+  # Traefik Reverse Proxy
+  traefik:
+    image: traefik:v2.10
+    container_name: traefik
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.email=israelabimbolaa@gmail.com"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8090:8080"  # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # Add this line
+      - ./letsencrypt:/letsencrypt
+    networks:
+      - todo-network
+
+  # Redis Queue
+  redis-queue:
+    image: redis:7-alpine
+    container_name: redis-queue
+    networks:
+      - todo-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Auth API (Go)
+  auth-api:
+    build:
+      context: ./auth-api
+      dockerfile: Dockerfile
+    container_name: auth-api
+    environment:
+      - AUTH_API_PORT=8081
+      - JWT_SECRET=${JWT_SECRET}
+      - USERS_API_ADDRESS=http://users-api:8083
+    networks:
+      - todo-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.auth-api.rule=Host(`israelabimbola.com`) && PathPrefix(`/api/auth`)"
+      - "traefik.http.routers.auth-api.entrypoints=websecure"
+      - "traefik.http.routers.auth-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.auth-api.loadbalancer.server.port=8081"
+      # HTTP to HTTPS redirect
+      - "traefik.http.routers.auth-api-http.rule=Host(`israelabimbola.com`) && PathPrefix(`/api/auth`)"
+      - "traefik.http.routers.auth-api-http.entrypoints=web"
+      - "traefik.http.routers.auth-api-http.middlewares=https-redirect"
+      - "traefik.http.middlewares.https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.https-redirect.redirectscheme.permanent=true"
+    depends_on:
+      - users-api
+
+  # Users API (Java Spring Boot)
+  users-api:
+    build:
+      context: ./users-api
+      dockerfile: Dockerfile
+    container_name: users-api
+    environment:
+      - SERVER_PORT=8083
+      - JWT_SECRET=${JWT_SECRET}
+    networks:
+      - todo-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.users-api.rule=Host(`israelabimbola.com`) && PathPrefix(`/api/users`)"
+      - "traefik.http.routers.users-api.entrypoints=websecure"
+      - "traefik.http.routers.users-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.users-api.loadbalancer.server.port=8083"
+      # HTTP to HTTPS redirect
+      - "traefik.http.routers.users-api-http.rule=Host(`israelabimbola.com`) && PathPrefix(`/api/users`)"
+      - "traefik.http.routers.users-api-http.entrypoints=web"
+      - "traefik.http.routers.users-api-http.middlewares=https-redirect"
+
+  # TODOs API (Node.js)
+  todos-api:
+    build:
+      context: ./todos-api
+      dockerfile: Dockerfile
+    container_name: todos-api
+    environment:
+      - JWT_SECRET=${JWT_SECRET}
+      - REDIS_HOST=redis-queue
+      - REDIS_PORT=6379
+      - REDIS_CHANNEL=log_channel
+    networks:
+      - todo-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.todos-api.rule=Host(`israelabimbola.com`) && PathPrefix(`/api/todos`)"
+      - "traefik.http.routers.todos-api.entrypoints=websecure"
+      - "traefik.http.routers.todos-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.todos-api.loadbalancer.server.port=8082"
+      # HTTP to HTTPS redirect
+      - "traefik.http.routers.todos-api-http.rule=Host(`israelabimbola.com`) && PathPrefix(`/api/todos`)"
+      - "traefik.http.routers.todos-api-http.entrypoints=web"
+      - "traefik.http.routers.todos-api-http.middlewares=https-redirect"
+    depends_on:
+      redis-queue:
+        condition: service_healthy
+
+  # Log Message Processor (Python)
+  log-message-processor:
+    build:
+      context: ./log-message-processor
+      dockerfile: Dockerfile
+    container_name: log-processor
+    environment:
+      - REDIS_HOST=redis-queue
+      - REDIS_PORT=6379
+      - REDIS_CHANNEL=log_channel
+    networks:
+      - todo-network
+    depends_on:
+      redis-queue:
+        condition: service_healthy
+
+  # Frontend (Vue.js)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    environment:
+      - PORT=8080
+      - AUTH_API_ADDRESS=http://auth-api:8081
+      - TODOS_API_ADDRESS=http://todos-api:8082
+    networks:
+      - todo-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=Host(`israelabimbola.com`)"
+      - "traefik.http.routers.frontend.entrypoints=websecure"
+      - "traefik.http.routers.frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.services.frontend.loadbalancer.server.port=8080"
+      # HTTP to HTTPS redirect
+      - "traefik.http.routers.frontend-http.rule=Host(`israelabimbola.com`)"
+      - "traefik.http.routers.frontend-http.entrypoints=web"
+      - "traefik.http.routers.frontend-http.middlewares=https-redirect"
+    depends_on:
+      - auth-api
+      - todos-api
+      - users-api
+
+networks:
+  todo-network:
+    driver: bridge
