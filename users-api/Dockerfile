@@ -1,9 +1,7 @@
-FROM eclipse-temurin:11-jre
+FROM openjdk:8-jre-alpine
 
 WORKDIR /app
 
-COPY target/*.jar app.jar
+COPY target/users-api-0.0.1-SNAPSHOT.jar app.jar
 
-EXPOSE 8083
-
-ENTRYPOINT ["java", "--add-opens", "java.base/java.lang=ALL-UNNAMED", "-jar", "app.jar"]
+CMD ["java", "-jar", "app.jar"]
