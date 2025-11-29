@@ -7,7 +7,7 @@ owner_email    = "israelabimbolaa@gmail.com"
 
 # Compute / EC2
 instance_type  = "t3.medium"
-volume_size    = 25
+volume_size    = 30
 
 # SSH Configuration
 key_name            = "todo-app-key"
@@ -21,4 +21,4 @@ allowed_ssh_cidr = ["0.0.0.0/0"]
 # Application
 domain_name  = "israelabimbola.com"
 deploy_user  = "deploy"
-app_repo     = "https://github.com/israeladenuga/DevOps-Stage-6.git"
+app_repo     = "https://github.com/bximbo/DevOps-Stage-6.git"

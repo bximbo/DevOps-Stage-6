@@ -19,7 +19,7 @@ variable "instance_type" {
 variable "volume_size" {
   description = "Root volume size in GB"
   type        = number
-  default     = 25
+  default     = 30
 }
 
 variable "key_name" {

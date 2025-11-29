@@ -25,6 +25,7 @@ provider "aws" {
       Project     = "TODO-App"
       Environment = var.environment
       ManagedBy   = "Terraform"
+      Owner       = var.owner_email
     }
   }
 }
@@ -32,7 +33,7 @@ provider "aws" {
 # Data source to get latest Ubuntu 22.04 AMI
 data "aws_ami" "ubuntu" {
   most_recent = true
-  owners      = ["099720109477"] # Canonical
+  owners      = ["099720109477"]
 
   filter {
     name   = "name"
@@ -45,11 +46,17 @@ data "aws_ami" "ubuntu" {
   }
 }
 
+# Create key pair from provided public key
+resource "aws_key_pair" "deployer" {
+  key_name   = var.key_name
+  public_key = var.ssh_public_key
+}
+
 # Create EC2 instance
 resource "aws_instance" "app_server" {
   ami           = data.aws_ami.ubuntu.id
   instance_type = var.instance_type
-  key_name      = var.key_name
+  key_name      = aws_key_pair.deployer.key_name  # Use the created key pair
 
   vpc_security_group_ids = [aws_security_group.app_sg.id]
 
@@ -61,10 +68,7 @@ resource "aws_instance" "app_server" {
 
   user_data = <<-EOF
               #!/bin/bash
-              # Update system
               apt-get update
-              
-              # Set hostname
               hostnamectl set-hostname todo-app-server
               EOF
 
@@ -97,15 +101,11 @@ resource "local_file" "ansible_inventory" {
     ssh_user      = var.ssh_user
     ssh_key       = var.ssh_private_key_path
     domain_name   = var.domain_name
-    deploy_user   = var.deploy_user
-    app_repo      = var.app_repo
   })
-
   filename = "${path.module}/../ansible/inventory/hosts"
 
   depends_on = [aws_eip.app_eip]
 }
-
 
 # Trigger Ansible after infrastructure is ready
 resource "null_resource" "run_ansible" {
@@ -117,11 +117,14 @@ resource "null_resource" "run_ansible" {
   provisioner "local-exec" {
     command = <<-EOT
       echo "Waiting for server to be ready..."
-      sleep 60
+      sleep 90
+      
+      echo "Testing SSH connection..."
+      ssh -o StrictHostKeyChecking=no -i ${var.ssh_private_key_path} ${var.ssh_user}@${aws_eip.app_eip.public_ip} "echo 'SSH connection successful'"
       
       echo "Running Ansible playbook..."
       cd ${path.module}/../ansible
-      ansible-playbook -i inventory/hosts playbook.yml
+      ansible-playbook -i inventory/hosts playbook.yml -v
     EOT
   }
 
