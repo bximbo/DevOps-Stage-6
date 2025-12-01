@@ -74,7 +74,7 @@ jobs:
           password: ${{ secrets.SMTP_PASSWORD }}
           subject: "${{ job.status == 'success' && '✅' || '❌' }} Application Deployment ${{ job.status }}"
           to: israelabimbolaa@gmail.com
-          from: TODO App DevOps CI/CD
+          from: "${{ secrets.SMTP_USERNAME }}"
           body: |
             Application deployment ${{ job.status }}!
             
