@@ -101,6 +101,8 @@ resource "local_file" "ansible_inventory" {
     ssh_user      = var.ssh_user
     ssh_key       = var.ssh_private_key_path
     domain_name   = var.domain_name
+    deploy_user   = var.deploy_user
+    app_repo      = var.app_repo
   })
   filename = "${path.module}/../ansible/inventory/hosts"
 
