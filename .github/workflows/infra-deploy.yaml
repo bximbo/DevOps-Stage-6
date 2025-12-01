@@ -15,9 +15,67 @@ env:
   TF_VERSION: 1.6.0
 
 jobs:
+
+  ###################################################################
+  # 🟩 1. Terraform Import Job — runs FIRST
+  ###################################################################
+  terraform-import:
+    name: One-Time Terraform Import of Existing AWS Resources
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: infra/terraform
+        run: terraform init
+
+      - name: Import Key Pair & Security Group (safe, only if missing)
+        working-directory: infra/terraform
+        run: |
+          echo "Checking Terraform state before imports..."
+
+          # Import Key Pair if not already imported
+          if ! terraform state show aws_key_pair.deployer >/dev/null 2>&1; then
+            echo "⤵️ Importing EC2 Key Pair..."
+            terraform import aws_key_pair.deployer todo-app-key || true
+          else
+            echo "✔️ Key Pair already in state, skipping."
+          fi
+
+          # Import Security Group if not already imported
+          if ! terraform state show aws_security_group.app_sg >/dev/null 2>&1; then
+            echo "⤵️ Importing Security Group..."
+            terraform import aws_security_group.app_sg sg-0bb16e27ccdf7cc20 || true
+          else
+            echo "✔️ Security Group already in state, skipping."
+          fi
+
+      - name: Show state after import
+        working-directory: infra/terraform
+        run: terraform state list
+
+
+  ###################################################################
+  # 🟦 2. Terraform PLAN Job — runs AFTER import job
+  ###################################################################
   terraform-plan:
     name: Terraform Plan & Drift Detection
     runs-on: ubuntu-latest
+    needs: terraform-import
     outputs:
       has_drift: ${{ steps.drift_check.outputs.has_drift }}
       
@@ -61,7 +119,6 @@ jobs:
           echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
           terraform show -no-color tfplan > plan_output.txt
           exit 0
-        continue-on-error: false
 
       - name: Check for Drift
         id: drift_check
@@ -97,21 +154,13 @@ jobs:
           from: TODO App DevOps CI/CD
           body: |
             Infrastructure changes have been detected and require your review!
-            
-            Repository: ${{ github.repository }}
-            Branch: ${{ github.ref_name }}
-            Commit: ${{ github.sha }}
-            Triggered by: ${{ github.actor }}
-            
-            Action: Terraform detected changes to infrastructure
-            Status: Waiting for manual approval in production environment
-            
-            View the full plan and approve the deployment:
+            Review the plan here:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-            
-            Note: For first deployment, this creates new infrastructure.
-            For subsequent runs, this indicates drift from desired state.
 
+
+  ###################################################################
+  # 🟨 3. Manual Approval (unchanged)
+  ###################################################################
   wait-for-approval:
     name: Wait for Manual Approval
     runs-on: ubuntu-latest
@@ -119,20 +168,23 @@ jobs:
     environment: production
     
     steps:
-    - name: Manual approval checkpoint
-      run: |
-        if [ "${{ needs.terraform-plan.outputs.has_drift }}" == "true" ]; then
-          echo "✅ Changes approved - Deploying infrastructure updates"
-        else
-          echo "✅ No changes detected - Deployment approved to proceed"
-        fi
+      - name: Manual approval checkpoint
+        run: |
+          if [ "${{ needs.terraform-plan.outputs.has_drift }}" == "true" ]; then
+            echo "Changes approved - Deploying infrastructure updates"
+          else
+            echo "No changes detected - Deployment approved to proceed"
+          fi
 
+
+  ###################################################################
+  # 🟥 4. Apply Infrastructure — AFTER import + plan + approval
+  ###################################################################
   terraform-apply:
     name: Terraform Apply
     runs-on: ubuntu-latest
     needs: [terraform-plan, wait-for-approval]
-    if: always() && needs.terraform-plan.result == 'success' && needs.wait-for-approval.result == 'success'
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -164,29 +216,6 @@ jobs:
         working-directory: infra/terraform
         run: terraform init
 
-      ###################################################################
-      # 🟩 NEW SECTION: Safe One-Time Terraform Import
-      ###################################################################
-      - name: Import AWS Key Pair & Security Group (only if missing)
-        working-directory: infra/terraform
-        run: |
-          # Import key pair only if not in Terraform state
-          if ! terraform state show aws_key_pair.deployer >/dev/null 2>&1; then
-            echo "Importing missing EC2 Key Pair..."
-            terraform import aws_key_pair.deployer todo-app-key
-          else
-            echo "Key Pair already imported, skipping."
-          fi
-
-          # Import security group only if not in Terraform state
-          if ! terraform state show aws_security_group.app_sg >/dev/null 2>&1; then
-            echo "Importing missing Security Group..."
-            terraform import aws_security_group.app_sg sg-0bb16e27ccdf7cc20
-          else
-            echo "Security Group already imported, skipping."
-          fi
-      ###################################################################
-
       - name: Terraform Apply
         working-directory: infra/terraform
         env:
@@ -194,7 +223,6 @@ jobs:
           TF_VAR_owner_email: israelabimbolaa@gmail.com
           TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
           TF_VAR_ssh_private_key_path: ~/.ssh/id_rsa
-          GITHUB_REPOSITORY: ${{ github.repository }}
         run: terraform apply -auto-approve
 
       - name: Send Deployment Success Email
@@ -209,12 +237,7 @@ jobs:
           to: israelabimbolaa@gmail.com
           from: TODO App DevOps CI/CD
           body: |
-            Infrastructure deployment completed successfully!
-            
-            Repository: ${{ github.repository }}
-            Branch: ${{ github.ref_name }}
-            Commit: ${{ github.sha }}
-            
+            Deployment completed successfully!
             Application URL: https://israelabimbola.com
 
       - name: Send Deployment Failure Email
@@ -229,10 +252,5 @@ jobs:
           to: israelabimbolaa@gmail.com
           from: TODO App DevOps CI/CD
           body: |
-            Infrastructure deployment failed!
-            
-            Repository: ${{ github.repository }}
-            Branch: ${{ github.ref_name }}
-            Commit: ${{ github.sha }}
-            
-            Please check the logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            Deployment failed! Review logs here:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
