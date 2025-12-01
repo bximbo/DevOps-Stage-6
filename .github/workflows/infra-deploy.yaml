@@ -17,69 +17,11 @@ env:
 jobs:
 
   ###################################################################
-  # 🟩 1. Terraform Import Job — runs FIRST
-  ###################################################################
-  terraform-import:
-    name: One-Time Terraform Import of Existing AWS Resources
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - name: Terraform Init
-        working-directory: infra/terraform
-        run: terraform init
-
-      - name: Import Key Pair & Security Group (safe, only if missing)
-        working-directory: infra/terraform
-        run: |
-          echo "Checking Terraform state before imports..."
-
-          # Export required Terraform variables to avoid prompts
-          export TF_VAR_ssh_public_key="${{ secrets.SSH_PUBLIC_KEY }}"
-          export TF_VAR_domain_name="israelabimbola.com"
-          export TF_VAR_owner_email="israelabimbolaa@gmail.com"
-
-          # Import Key Pair if not already imported
-          if ! terraform state show aws_key_pair.deployer >/dev/null 2>&1; then
-            echo "⤵️ Importing EC2 Key Pair..."
-            terraform import aws_key_pair.deployer todo-app-key || true
-          else
-            echo "✔️ Key Pair already in state, skipping."
-          fi
-
-          # Import Security Group if not already imported
-          if ! terraform state show aws_security_group.app_sg >/dev/null 2>&1; then
-            echo "⤵️ Importing Security Group..."
-            terraform import aws_security_group.app_sg sg-0bb16e27ccdf7cc20 || true
-          else
-            echo "✔️ Security Group already in state, skipping."
-          fi
-
-      - name: Show state after import
-        working-directory: infra/terraform
-        run: terraform state list
-
-  ###################################################################
-  # 🟦 2. Terraform PLAN Job — runs AFTER import job
+  # 🟦 1. Terraform PLAN Job — no import needed
   ###################################################################
   terraform-plan:
     name: Terraform Plan & Drift Detection
     runs-on: ubuntu-latest
-    needs: terraform-import
     outputs:
       has_drift: ${{ steps.drift_check.outputs.has_drift }}
       
@@ -101,7 +43,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: infra/terraform
-        run: terraform init -backend-config="bimbo-terraform-state-devops" -backend-config="key=devops-stage-6/terraform.tfstate"
+        run: terraform init
 
       - name: Terraform Validate
         working-directory: infra/terraform
@@ -161,8 +103,9 @@ jobs:
             Review the plan here:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+
   ###################################################################
-  # 🟨 3. Manual Approval (unchanged)
+  # 🟨 2. Manual Approval
   ###################################################################
   wait-for-approval:
     name: Wait for Manual Approval
@@ -179,8 +122,9 @@ jobs:
             echo "No changes detected - Deployment approved to proceed"
           fi
 
+
   ###################################################################
-  # 🟥 4. Apply Infrastructure — AFTER import + plan + approval
+  # 🟥 3. Terraform Apply
   ###################################################################
   terraform-apply:
     name: Terraform Apply
