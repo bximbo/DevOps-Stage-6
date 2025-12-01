@@ -39,7 +39,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: infra/terraform
-        run: terraform init -backend-config="bucket=my-terraform-state" -backend-config="key=dev/terraform.tfstate"
+        run: terraform init -backend-config="bimbo-terraform-state-devops" -backend-config="key=devops-stage-6/terraform.tfstate"
 
       - name: Terraform Validate
         working-directory: infra/terraform
@@ -163,6 +163,29 @@ jobs:
       - name: Terraform Init
         working-directory: infra/terraform
         run: terraform init
+
+      ###################################################################
+      # 🟩 NEW SECTION: Safe One-Time Terraform Import
+      ###################################################################
+      - name: Import AWS Key Pair & Security Group (only if missing)
+        working-directory: infra/terraform
+        run: |
+          # Import key pair only if not in Terraform state
+          if ! terraform state show aws_key_pair.deployer >/dev/null 2>&1; then
+            echo "Importing missing EC2 Key Pair..."
+            terraform import aws_key_pair.deployer todo-app-key
+          else
+            echo "Key Pair already imported, skipping."
+          fi
+
+          # Import security group only if not in Terraform state
+          if ! terraform state show aws_security_group.app_sg >/dev/null 2>&1; then
+            echo "Importing missing Security Group..."
+            terraform import aws_security_group.app_sg sg-0bb16e27ccdf7cc20
+          else
+            echo "Security Group already imported, skipping."
+          fi
+      ###################################################################
 
       - name: Terraform Apply
         working-directory: infra/terraform
