@@ -39,7 +39,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: infra/terraform
-        run: terraform init
+        run: terraform init -backend-config="bucket=my-terraform-state" -backend-config="key=dev/terraform.tfstate"
 
       - name: Terraform Validate
         working-directory: infra/terraform
