@@ -48,6 +48,11 @@ jobs:
         run: |
           echo "Checking Terraform state before imports..."
 
+          # Export required Terraform variables to avoid prompts
+          export TF_VAR_ssh_public_key="${{ secrets.SSH_PUBLIC_KEY }}"
+          export TF_VAR_domain_name="israelabimbola.com"
+          export TF_VAR_owner_email="israelabimbolaa@gmail.com"
+
           # Import Key Pair if not already imported
           if ! terraform state show aws_key_pair.deployer >/dev/null 2>&1; then
             echo "⤵️ Importing EC2 Key Pair..."
@@ -67,7 +72,6 @@ jobs:
       - name: Show state after import
         working-directory: infra/terraform
         run: terraform state list
-
 
   ###################################################################
   # 🟦 2. Terraform PLAN Job — runs AFTER import job
@@ -157,7 +161,6 @@ jobs:
             Review the plan here:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
-
   ###################################################################
   # 🟨 3. Manual Approval (unchanged)
   ###################################################################
@@ -175,7 +178,6 @@ jobs:
           else
             echo "No changes detected - Deployment approved to proceed"
           fi
-
 
   ###################################################################
   # 🟥 4. Apply Infrastructure — AFTER import + plan + approval
